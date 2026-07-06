@@ -20,14 +20,23 @@ router.get('/', requireAuth, async (req, res) => {
 });
 
 router.post('/', requireAuth, async (req, res) => {
-  const { repo_id, event_type, keyword, label, comment, slack_message } = req.body;
+  const { repo_id, event_type, keyword, label, comment, slack_message, match_author, match_existing_label } = req.body;
   if (!repo_id || !keyword || !(await assertOwnsRepo(req.userId, repo_id))) {
     return res.status(400).json({ error: 'repo_id and keyword are required, and repo must be yours' });
   }
   const result = await pool.query(
-    `INSERT INTO rules (repo_id, event_type, keyword, label, comment, slack_message)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [repo_id, event_type || 'issues', keyword, label || null, comment || null, slack_message || null]
+    `INSERT INTO rules (repo_id, event_type, keyword, label, comment, slack_message, match_author, match_existing_label)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    [
+      repo_id,
+      event_type || 'issues',
+      keyword,
+      label || null,
+      comment || null,
+      slack_message || null,
+      match_author || null,
+      match_existing_label || null,
+    ]
   );
   res.json(result.rows[0]);
 });

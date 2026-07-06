@@ -3,7 +3,15 @@ import { api } from '../api';
 
 export default function RulesConfig({ repoId }) {
   const [rules, setRules] = useState([]);
-  const [form, setForm] = useState({ event_type: 'issues', keyword: '', label: '', comment: '', slack_message: '' });
+  const [form, setForm] = useState({
+    event_type: 'issues',
+    keyword: '',
+    label: '',
+    comment: '',
+    slack_message: '',
+    match_author: '',
+    match_existing_label: '',
+  });
   const [saving, setSaving] = useState(false);
 
   function load() {
@@ -20,7 +28,15 @@ export default function RulesConfig({ repoId }) {
     setSaving(true);
     try {
       await api.createRule({ repo_id: repoId, ...form });
-      setForm({ event_type: 'issues', keyword: '', label: '', comment: '', slack_message: '' });
+      setForm({
+        event_type: 'issues',
+        keyword: '',
+        label: '',
+        comment: '',
+        slack_message: '',
+        match_author: '',
+        match_existing_label: '',
+      });
       load();
     } finally {
       setSaving(false);
@@ -59,15 +75,30 @@ export default function RulesConfig({ repoId }) {
           style={inputStyle}
         />
         <input
-          placeholder="Slack message ({title}, {url})"
+          placeholder="Slack message ({title}, {url}, {summary}, {priority})"
           value={form.slack_message}
           onChange={(e) => setForm({ ...form, slack_message: e.target.value })}
-          style={{ ...inputStyle, minWidth: 220 }}
+          style={{ ...inputStyle, minWidth: 260 }}
+        />
+        <input
+          placeholder="only if author is… (optional)"
+          value={form.match_author}
+          onChange={(e) => setForm({ ...form, match_author: e.target.value })}
+          style={inputStyle}
+        />
+        <input
+          placeholder="only if already labeled… (optional)"
+          value={form.match_existing_label}
+          onChange={(e) => setForm({ ...form, match_existing_label: e.target.value })}
+          style={inputStyle}
         />
         <button type="submit" disabled={saving} style={btnStyle}>
           {saving ? 'Adding…' : 'Add rule'}
         </button>
       </form>
+      <p style={{ color: '#64748b', fontSize: 12, marginTop: -6, marginBottom: 12 }}>
+        A rule fires only when the keyword matches AND (if set) the author and existing-label filters also match.
+      </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {rules.map((r) => (
@@ -84,7 +115,9 @@ export default function RulesConfig({ repoId }) {
             }}
           >
             <span>
-              [{r.event_type}] title/body contains "<strong>{r.keyword}</strong>" →{' '}
+              [{r.event_type}] title/body contains "<strong>{r.keyword}</strong>"
+              {r.match_author && ` · author is "${r.match_author}"`}
+              {r.match_existing_label && ` · already labeled "${r.match_existing_label}"`} →{' '}
               {r.label && `label "${r.label}"`} {r.comment && '· comment'} {r.slack_message && '· Slack'}
             </span>
             <button

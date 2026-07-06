@@ -21,7 +21,8 @@ export const api = {
   connectedRepos: () => request('/api/repos/connected'),
   connectRepo: (full_name, github_repo_id) =>
     request('/api/repos/connect', { method: 'POST', body: JSON.stringify({ full_name, github_repo_id }) }),
-  events: (repo_id) => request(`/api/events?repo_id=${repo_id}`),
+  events: (repo_id, status) => request(`/api/events?repo_id=${repo_id}${status ? `&status=${status}` : ''}`),
+  retryEvent: (id) => request(`/api/events/${id}/retry`, { method: 'POST' }),
   rules: (repo_id) => request(`/api/rules?repo_id=${repo_id}`),
   createRule: (rule) => request('/api/rules', { method: 'POST', body: JSON.stringify(rule) }),
   deleteRule: (id) => request(`/api/rules/${id}`, { method: 'DELETE' }),

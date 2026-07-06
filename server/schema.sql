@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS rules (
   keyword TEXT NOT NULL,        -- matched case-insensitively against title+body
   label TEXT,                   -- label to add on match (nullable)
   comment TEXT,                 -- comment to post on match (nullable)
-  slack_message TEXT,           -- message template, {title} and {url} get substituted
+  slack_message TEXT,           -- message template, {title}/{url}/{summary}/{priority} get substituted
+  match_author TEXT,            -- optional extra filter: only match if issue/PR author is this username
+  match_existing_label TEXT,    -- optional extra filter: only match if issue already carries this label
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -43,6 +45,9 @@ CREATE TABLE IF NOT EXISTS events (
   action_taken TEXT,                 -- human-readable summary of what the bot did
   status TEXT NOT NULL DEFAULT 'received', -- received | processed | failed
   error TEXT,
+  ai_summary TEXT,                   -- one-sentence AI summary of the issue/PR (Groq)
+  ai_priority TEXT,                  -- 'low' | 'medium' | 'high', AI-suggested triage priority
+  payload JSONB,                     -- raw webhook payload, kept so failed events can be manually retried
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
