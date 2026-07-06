@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
-const { verifySignature } = require('../githubApi');
-const { processEvent } = require('../eventProcessor');
+const { verifySignature, addLabel, postComment } = require('../githubApi');
+const { sendSlackMessage } = require('../slack');
 
 const router = express.Router();
 
@@ -49,31 +49,74 @@ router.post('/github', async (req, res) => {
     return res.status(200).json({ ok: true, note: 'Already processed, skipping' });
   }
 
+  // Only issues and pull_request carry a title/body/number we can act on;
+  // push events are recorded but not rule-matched.
   const subject = payload.issue || payload.pull_request || null;
   const title = subject ? subject.title : `push to ${payload.ref || 'branch'}`;
   const url = subject ? subject.html_url : payload.compare;
   const action = payload.action || null;
 
   // Record (or update, if this is a retry) the event first, before acting,
-  // so nothing is silently lost even if the next steps fail. The raw payload
-  // is kept so the dashboard's manual "retry" button can reprocess it later
-  // without needing a fresh GitHub redelivery.
+  // so nothing is silently lost even if the next steps fail.
   const eventRow = await pool.query(
-    `INSERT INTO events (repo_id, delivery_id, event_type, action, title, url, status, payload)
-     VALUES ($1, $2, $3, $4, $5, $6, 'received', $7)
-     ON CONFLICT (delivery_id) DO UPDATE SET status = 'received', payload = $7
+    `INSERT INTO events (repo_id, delivery_id, event_type, action, title, url, status)
+     VALUES ($1, $2, $3, $4, $5, $6, 'received')
+     ON CONFLICT (delivery_id) DO UPDATE SET status = 'received'
      RETURNING id`,
-    [repo.id, deliveryId, eventType, action, title, url, JSON.stringify(payload)]
+    [repo.id, deliveryId, eventType, action, title, url]
   );
   const eventId = eventRow.rows[0].id;
 
   try {
-    await processEvent({ eventId, repo, eventType, payload });
+    let actionsTaken = [];
+    let matchedRuleId = null;
+
+    if (subject && (eventType === 'issues' || eventType === 'pull_request')) {
+      const haystack = `${subject.title || ''} ${subject.body || ''}`.toLowerCase();
+      const rulesResult = await pool.query(
+        'SELECT * FROM rules WHERE repo_id = $1 AND event_type = $2',
+        [repo.id, eventType]
+      );
+      const rule = rulesResult.rows.find((r) => haystack.includes(r.keyword.toLowerCase()));
+
+      if (rule) {
+        matchedRuleId = rule.id;
+        const [owner, repoName] = repo.full_name.split('/');
+        const issueNumber = subject.number;
+
+        // Look up the connected user's token to act as them on GitHub
+        const userResult = await pool.query(
+          'SELECT access_token FROM users WHERE id = (SELECT user_id FROM repos WHERE id = $1)',
+          [repo.id]
+        );
+        const token = userResult.rows[0].access_token;
+
+        if (rule.label) {
+          await addLabel(token, owner, repoName, issueNumber, rule.label);
+          actionsTaken.push(`added label "${rule.label}"`);
+        }
+        if (rule.comment) {
+          await postComment(token, owner, repoName, issueNumber, rule.comment);
+          actionsTaken.push('posted comment');
+        }
+
+        const slackText = (rule.slack_message || `Rule matched on {title}: {url}`)
+          .replace('{title}', title)
+          .replace('{url}', url);
+        const sent = await sendSlackMessage(slackText);
+        if (sent) actionsTaken.push('sent Slack notification');
+      }
+    }
+
+    await pool.query(
+      `UPDATE events SET status = 'processed', action_taken = $1, matched_rule_id = $2 WHERE id = $3`,
+      [actionsTaken.join(', ') || 'no rule matched', matchedRuleId, eventId]
+    );
+
     res.status(200).json({ ok: true });
   } catch (err) {
     console.error('Webhook processing failed:', err);
-    // Mark as failed (not "processed") so a GitHub redelivery will retry the side effects,
-    // and so the dashboard's manual retry button also picks it up.
+    // Mark as failed (not "processed") so a GitHub redelivery will retry the side effects.
     // Return 500 so GitHub knows to redeliver.
     await pool.query(`UPDATE events SET status = 'failed', error = $1 WHERE id = $2`, [
       err.message,
